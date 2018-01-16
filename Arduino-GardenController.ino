@@ -1,3 +1,5 @@
+#include <avr/wdt.h> //WatchDog Timer Library
+
 // Enable debug prints to serial monitor
 #define MY_DEBUG 
 #define MY_NODE_ID 3
@@ -219,10 +221,32 @@ unsigned long timeE;
 #else
 #include <avr/pgmspace.h>
 #endif
-#include <Wire.h>  // must be incuded here so that Arduino library object file references work
+
+//#include <Wire.h>  // must be incuded here so that Arduino library object file references work
+//#include <RtcDS3231.h>
+
+//RtcDS3231 Rtc;
+// CONNECTIONS:
+// DS3231 SDA --> SDA
+// DS3231 SCL --> SCL
+// DS3231 VCC --> 3.3v or 5v
+// DS3231 GND --> GND
+// SQW --->  (Pin19) Don't forget to pullup (4.7k to 10k to VCC)
+
+/* for software wire use below
+#include <SoftwareWire.h>  // must be included here so that Arduino library object file references work
 #include <RtcDS3231.h>
 
-RtcDS3231 Rtc;
+SoftwareWire myWire(SDA, SCL);
+RtcDS3231<SoftwareWire> Rtc(myWire);
+ for software wire use above */
+
+/* for normal hardware wire use below */
+#include <Wire.h> // must be included here so that Arduino library object file references work
+#include <RtcDS3231.h>
+RtcDS3231<TwoWire> Rtc(Wire);
+/* for normal hardware wire use above */
+
 // Interrupt Pin Lookup Table
 // (copied from Arduino Docs)
 //
@@ -275,6 +299,8 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 
 
 void setup () {
+    wdt_disable(); //WatchDog Timer Initializing...
+    
     //Setup Serial speed
     Serial.begin(115200);
 
@@ -329,7 +355,7 @@ void setup () {
     //--------RTC SETUP ------------
     // set the interupt pin to input mode
     pinMode(RtcSquareWavePin, INPUT);
-    Rtc.Begin();
+    Rtc.Begin();  
 
     // if you are using ESP-01 then uncomment the line below to reset the pins to
     // the available pins for SDA, SCL
@@ -429,7 +455,9 @@ void setup () {
     if (DEBUG) {  
       Serial.println("Menu Inicializado.");
     }
-
+    
+    wdt_enable(WDTO_8S); //WathDog Timer Start...
+    
     //Obtener/Enviar estados en Arduino a MySensors Gateway/Controlador
     printDateTime();
     Humedad();
@@ -806,6 +834,8 @@ void loop () {
        printDateTime();
        Humedad();
     }
+
+    wdt_reset(); //WatchDog Timer Reset...
 }
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
