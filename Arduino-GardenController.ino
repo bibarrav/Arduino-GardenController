@@ -61,7 +61,7 @@ MyMessage RiegoZona3(3,V_STATUS);
 MyMessage RiegoZona4(4,V_STATUS);
 MyMessage SRelay5(5,V_STATUS);
 MyMessage SRelay6(6,V_STATUS);
-MyMessage PuertaExterior(7,V_STATUS);
+MyMessage SRelay7(7,V_STATUS);
 MyMessage PWRiego(8,V_STATUS);
 MyMessage TEMP(9,V_TEMP);
 MyMessage HUM(10,V_HUM);
@@ -313,7 +313,7 @@ void setup () {
     request(23, V_VAR1);
     lastSend = lastPulse = millis();
 
-    attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
+    //attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
     
     // Setup all relay pins
     pinMode(Relay1, OUTPUT);
@@ -513,7 +513,7 @@ void presentation()
   present(4, S_BINARY, "Riego Zona 4" );
   present(5, S_BINARY, "Relay5" );
   present(6, S_BINARY, "Relay6" );
-  present(7, S_BINARY, "Puerta Exterior" );
+  present(7, S_BINARY, "Relay7" );
   present(8, S_BINARY, "Transformador Riego" );
   present(9, S_TEMP, "Temperatura Jardin" );
   present(10, S_HUM, "Humedad Jardin" );
@@ -550,7 +550,7 @@ void receive(const MyMessage &message) {
         if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
         break;
       case 7:
-        //Process change state for Relay7 - Puerta Exterior
+        //Process change state for Relay7
         if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
         break;
       case 11:
@@ -660,6 +660,7 @@ void receive(const MyMessage &message) {
 */
 // FlowMeter interrupt process
 void onPulse() {
+  wdt_reset(); //WatchDog Timer Reset...
   if (!SLEEP_MODE) {
     unsigned long newBlink = micros();
     unsigned long interval = newBlink-lastBlink;
@@ -688,7 +689,7 @@ void loop () {
       if (!pcReceived) {
         //Last Pulsecount not yet received from controller, request it again
         request(23, V_VAR1);
-        return;
+        //return;
       }
   
       if (!SLEEP_MODE && flow != oldflow) {
@@ -1158,7 +1159,7 @@ void SetUsarTimer2(bool Estado) {
 void Relays(int RelayNumber, int RelayPower) {
     if (!ShowingMenu){
       lcd.setCursor(0, 1);
-      lcd.print("Riego Zona" + String(RelayNumber));
+      lcd.print("Relay " + String(RelayNumber));
     }
     
     if (RelayPower == RelayOn)
@@ -1166,20 +1167,20 @@ void Relays(int RelayNumber, int RelayPower) {
       //No activar zonas de riego en paralelo, solo una a la vez!!!
       if ((Relays(11) == RelayOff && Relays(12) == RelayOff && Relays(13) == RelayOff && Relays(14) == RelayOff) || (RelayNumber != 1 && RelayNumber != 2 && RelayNumber != 3 && RelayNumber != 4)) {
        if (!ShowingMenu){
-          lcd.print(": On  ");
+          lcd.print(": On       ");
         }
         digitalWrite(RelayNumber+RelayNumber+29, RelayPower);
       }
       else {
         if (!ShowingMenu){
-          lcd.print(": --  ");
+          lcd.print(": --       ");
         }
       }
     }
     else
     {
       if (!ShowingMenu){
-        lcd.print(": Off ");
+        lcd.print(": Off      ");
       }
       digitalWrite(RelayNumber+RelayNumber+29, RelayPower);
     }
@@ -1218,7 +1219,7 @@ int Relays(int RelayNumber) {
           send(SRelay6.set(RelayPowerState));
           break;
         case 7:
-          send(PuertaExterior.set(RelayPowerState));
+          send(SRelay7.set(RelayPowerState));
           break;
         case 8:
           send(PWRiego.set(RelayPowerState));
