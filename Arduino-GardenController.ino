@@ -1,26 +1,19 @@
 #include <avr/wdt.h> //WatchDog Timer Library
 
-// Enable debug prints to serial monitor
-#define MY_DEBUG 
+boolean DEBUG = false; //Enable debug prints to serial monitor
+// Enable debug prints of MySensors to serial monitor
+#if (DEBUG)
+  #define MY_DEBUG 
+#endif
+
 #define MY_NODE_ID 3
 #define MY_PARENT_NODE_ID 1
-// Enable and select radio type attached
+// Enable and select MySensors radio type attached
 #define MY_RADIO_NRF24
 //#define MY_RADIO_RFM69
-#define MY_RF24_PA_LEVEL RF24_PA_MAX // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH or RF24_PA_MAX
-// Enable repeater functionality for this node
+#define MY_RF24_PA_LEVEL RF24_PA_HIGH // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH or RF24_PA_MAX
+// Enable MySensors repeater functionality for this node
 //#define MY_REPEATER_FEATURE
-
-/*NRF radio Pin configuration on Arduino MEGA
- * 50 --> MISO(7) --> 16
- * 51 --> MOSI(6) --> 15
- * 52 --> SCK(5) --> 14
- * 53 --> CSN(4) --> 46
- * 48 --> CE(3) --> 48
- * 3.3v --> VCC (2)
- * GND --> GND (1)
-*/
-
 // W5100 Ethernet module SPI enable (optional if using a shield/module that manages SPI_EN signal)
 //#define MY_W5100_SPI_EN 4  
 
@@ -45,15 +38,6 @@
 #include <SPI.h>
 #include <EEPROM.h>
 #include <MySensors.h>
-//#include "Bounce2.1/Bounce2.h"
-
-//Bounce debouncer = Bounce(); 
-//int oldValue=-1;
-
-//#define RELAY_1  3  // Arduino Digital I/O pin number for first relay (second on pin+1 etc)
-//#define NUMBER_OF_RELAYS 2 // Total number of attached relays
-//#define RELAY_ON 1  // GPIO value to write to turn on attached relay
-//#define RELAY_OFF 0 // GPIO value to write to turn off attached relay
 
 MyMessage RiegoZona1(1,V_STATUS);
 MyMessage RiegoZona2(2,V_STATUS);
@@ -101,7 +85,7 @@ double oldvolume =0;
 unsigned long lastSend =0;
 unsigned long lastPulse =0;
 
-unsigned long SEND_FREQUENCY = 30000; // Minimum time between send (in milliseconds). We don't want to spam the gateway.
+unsigned long SEND_FREQUENCY = 2000; // Minimum time between send (in milliseconds). We don't want to spam the gateway.
 
 
 #include <MenuSystem.h>
@@ -122,17 +106,11 @@ unsigned long SEND_FREQUENCY = 30000; // Minimum time between send (in milliseco
 unsigned long TiempoRiego = 180000;
 unsigned long TiempoRiegoPrueba;
 int Zonas = 4;
-/*
-if (loadState(12)!=255) {
-  Zonas = loadState(12);
-} */
-//bool Regar = true;
 
-bool Regar = loadState(14)?true:false;
-//bool UsarTimer1 = true;
-bool UsarTimer1 = loadState(17)?true:false;
-//bool UsarTimer2 = true;
-bool UsarTimer2 = loadState(19)?true:false;
+bool Regar = false;
+bool UsarTimer1 = false;
+bool UsarTimer2 = false;
+//DEBUG = loadState(22)?true:false;
 
 //Program Control Variables
 unsigned long TiempoRiegoTemp;
@@ -203,29 +181,19 @@ setMenuSelected_Type setMenu;
 byte cursorPosition;
 String setString;
 
-boolean DEBUG = false;
 unsigned long timeA;
 unsigned long timeB;
 unsigned long timeC;
 unsigned long timeD;
 unsigned long timeE;
   
-// CONNECTIONS:
-// DS3231 SDA --> SDA
-// DS3231 SCL --> SCL
-// DS3231 VCC --> 3.3v or 5v
-// DS3231 GND --> GND
-
 #if defined(ESP8266)
-#include <pgmspace.h>
+  #include <pgmspace.h>
 #else
-#include <avr/pgmspace.h>
+  #include <avr/pgmspace.h>
 #endif
 
-//#include <Wire.h>  // must be incuded here so that Arduino library object file references work
-//#include <RtcDS3231.h>
-
-//RtcDS3231 Rtc;
+//RealTime Clock
 // CONNECTIONS:
 // DS3231 SDA --> SDA
 // DS3231 SCL --> SCL
@@ -277,6 +245,7 @@ void InteruptServiceRoutine()
     interuptFlag = true;
 }
 
+//Temperature & Humidity Sensor
 #include <DHT.h>
 #define DHTPIN 22     // what pin we're connected to
 // Uncomment whatever type you're using!
@@ -291,7 +260,7 @@ void InteruptServiceRoutine()
 
 DHT dht(DHTPIN, DHTTYPE);
 
-// include the library code:
+// LCD Screen 2x16
 #include <LiquidCrystal.h>
 #define LCDBacklight 44 //LCD Pin Backlight control
 // initialize the library with the numbers of the interface pins
@@ -304,16 +273,15 @@ void setup () {
     //Setup Serial speed
     Serial.begin(115200);
 
-    //Flow Sensor
+    //Setup Flow Sensor
     // initialize our digital pins internal pullup resistor so one pulse switches from high to low (less distortion)
     pinMode(FLOW_SENSOR, INPUT_PULLUP);
     pulseCount = oldPulseCount = 0;
-
-    // Fetch last known pulse count value from gw
+    //Fetch last known pulse count value from gw
     request(23, V_VAR1);
     lastSend = lastPulse = millis();
 
-    //attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
+    attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
     
     // Setup all relay pins
     pinMode(Relay1, OUTPUT);
@@ -403,7 +371,7 @@ void setup () {
     // throw away any old alarm state before we ran
     Rtc.LatchAlarmsTriggeredFlags();
 
-    // setup external interupt 
+    // setup external interrupt for RTC Alarm
     attachInterrupt(RtcSquareWaveInterrupt, InteruptServiceRoutine, FALLING);
 
     // Menu setup
@@ -484,27 +452,37 @@ void setup () {
     send(RiegoDebug.set(DEBUG));
 }
 
-//Cargar las variables con la informacion almacenada en la EEPROM
+//Load States from EEPROM
 void before() { 
-//  for (int sensor=1, pin=RELAY_1; sensor<=NUMBER_OF_RELAYS;sensor++, pin++) {
-    // Then set relay pins in output mode
-//    pinMode(pin, OUTPUT);   
-//    // Set relay to last known state (using eeprom storage) 
-//    digitalWrite(pin, loadState(sensor)?RELAY_ON:RELAY_OFF);
-//  if (DEBUG) {
+
+  //Load saved states
+  if (loadState(11)!=255) {
+    TiempoRiego = loadState(11);
+    TiempoRiego = TiempoRiego * 1000;
+  }
+  if (loadState(12)!=255) {
+    Zonas = loadState(12);
+  }
+
+  Regar = loadState(14)?true:false;
+  UsarTimer1 = loadState(17)?true:false;
+  UsarTimer2 = loadState(19)?true:false;
+  DEBUG = loadState(22)?true:false;
+
+  //List all saved data
+  if (DEBUG) {
     Serial.println("--> Leyendo valores desde EEPROM :");
     for (int i=0;i<=255;i++) {
       Serial.println("---> Sensor " + String(i) + " Valor:" + String(loadState(i)));
     }
     Serial.println("--> Lectura completada"); 
-//  }
-//  }
+  }
 }
 
 void presentation()
 {   
   // Send the sketch version information to the gateway and Controller
-  sendSketchInfo("RiegoJardin", "1.8");
+  sendSketchInfo("GardenController", "1.9");
 
   // Register all sensors to gw (they will be created as child devices)
   present(1, S_BINARY, "Riego Zona 1" );
@@ -534,81 +512,104 @@ void presentation()
 
 void receive(const MyMessage &message) {
      // We only expect one type of message from controller. But we better check anyway.
-     //if (message.type==V_LIGHT) {
-     // Change relay state
-     //digitalWrite(message.sensor-1+RELAY_1, message.getBool()?RELAY_ON:RELAY_OFF);
-     // Store state in eeprom
-     //saveState(message.sensor, message.getBool());
-     
-     switch(message.sensor) {
+     // Write some debug info
+    String messageData;
+    if (DEBUG) {
+      Serial.print("Incoming message update for sensor:");
+      Serial.print(message.sensor);
+      Serial.print(", New value: ");
+    }
+
+    switch(message.sensor) {
       case 5:
         //Process change state for Relay5
         if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
+        messageData = message.getInt();
         break;
       case 6:
         //Process change state for Relay6
         if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
+        messageData = message.getInt();
         break;
       case 7:
         //Process change state for Relay7
         if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
+        messageData = message.getInt();
         break;
       case 11:
         //Update duraccion riego
         if (message.type==V_CUSTOM) SetDuracionRiego(message.getInt());
+        messageData = message.getInt();
         break;
       case 12:
         //Update numero de zonas Riego
         if (message.type==V_CUSTOM) SetZonasRiego(message.getInt());
+        messageData = message.getInt();
         break;
       case 13:
         //Update Prueba zonas Riego
         if (message.type==V_STATUS) SetPruebaRiego(message.getInt());
+        messageData = message.getInt();
         break;
       case 14:
         //Update Modo Riego
         if (message.type==V_STATUS) SetModoRiego(message.getInt());
+        messageData = message.getInt();
         break;
       case 15:
         //Update Fecha-Hora Rtc Riego
         if (message.type==V_TEXT) updateDateTime(message.getString());
+        messageData = message.getString();
         break;
       case 16:
         // Update Timer1 Riego
         if (message.type==V_TEXT) SetTimer1(message.getString());
+        messageData = message.getString();
         break;
       case 17:
         //Update Usar Timer1 Riego
         if (message.type==V_STATUS) SetUsarTimer1(message.getBool());
+        messageData = message.getBool();
         break;
       case 18:
         // Update Timer2 Riego
         if (message.type==V_TEXT) SetTimer2(message.getString());
+        messageData = message.getString();
         break;
       case 19:
         //Update Usar Timer2 Riego
         if (message.type==V_STATUS) SetUsarTimer2(message.getBool());
+        messageData = message.getBool();
         break;
       case 21:
         //Update Status Riego Jardin --> Regar/Dejar de regar
         if (message.type==V_STATUS) SetRegar(message.getBool());
+        messageData = message.getBool();
         break;
       case 22:
         //Update DEBUG Flag
         if (message.type==V_STATUS) DEBUG=message.getBool();
+        messageData = message.getBool();
         break;
       case 23:
         if (message.type==V_VAR1) {
           unsigned long gwPulseCount=message.getULong();
           pulseCount += gwPulseCount;
           flow=oldflow=0;
-          Serial.print("Received last pulse count from gw:");
-          Serial.println(pulseCount);
           pcReceived = true;
+          if (DEBUG) {
+            Serial.print("Received last pulse count from gw:");
+            Serial.println(pulseCount);
+          }
         }
+        messageData = message.getULong();
        break;
      }
-     /* message class Getter methods 
+
+     if (DEBUG) {
+       Serial.println(messageData);
+     }
+     /* MySensors message class Getter methods 
       char* getStream(char *buffer) const;
       char* getString(char *buffer) const;
       const char* getString() const;
@@ -624,40 +625,9 @@ void receive(const MyMessage &message) {
       uint8_t getCommand() const;
       // Getter for ack-flag. True if this is an ack message.
       bool isAck() const;
-      */
-     
-     // Write some debug info
-     Serial.print("Incoming change for sensor:");
-     Serial.print(message.sensor);
-     Serial.print(", New status: ");
-     Serial.println(message.getBool());
-  // } 
+      */ 
 }
-/* Control por MQTT a Migrar a MySensors
-    // Process Message
-    if (String(topic).substring(0, String(topic).length()-1) == "openHAB/Jardin/RiegoZona"){
-      Relays(String(String(topic).substring(String(topic).length()-1)).toInt(), String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoReloj"){
-      updateDateTime(msgString);
-    if  (String(topic) == "openHAB/Jardin/RiegoTimer1"){
-      SetTimer1(msgString);
-    if  (String(topic) == "openHAB/Jardin/RiegoTimer2"){
-      SetTimer2(msgString);
-    if  (String(topic) == "openHAB/Jardin/RiegoUsarTimer1"){
-      SetUsarTimer1(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoUsarTimer2"){
-      SetUsarTimer2(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoModo"){
-      SetModoRiego(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoPrueba"){
-      SetPruebaRiego(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoZonas"){
-      SetZonasRiego(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoDuraccion"){
-      SetDuracionRiego(String(msgString).toInt());
-    if  (String(topic) == "openHAB/Jardin/RiegoRegar"){
-      SetRegar(String(msgString).toInt());
-*/
+
 // FlowMeter interrupt process
 void onPulse() {
   wdt_reset(); //WatchDog Timer Reset...
@@ -689,15 +659,15 @@ void loop () {
       if (!pcReceived) {
         //Last Pulsecount not yet received from controller, request it again
         request(23, V_VAR1);
-        //return;
+        return;
       }
   
       if (!SLEEP_MODE && flow != oldflow) {
         oldflow = flow;
-  
-        Serial.print("Flujo de Riego (l/min):");
-        Serial.println(flow);
-  
+        if (DEBUG) {
+          Serial.print("Flujo de Riego (l/min):");
+          Serial.println(flow);
+        }
         // Check that we dont get unresonable large flow value.
         // could hapen when long wraps or false interrupt triggered
         if (flow<((unsigned long)MAX_FLOW)) {
@@ -708,34 +678,40 @@ void loop () {
       // No Pulse count received in 2min
       if(currentTime - lastPulse > 120000) {
         flow = 0;
+        if (DEBUG) {
+          Serial.print("No se ha recibido pulsos en los ultimos 2 min.");
+          Serial.print("Flujo de Riego : ");
+          Serial.println(flow);
+        }
       }
   
       // Pulse count has changed
       if ((pulseCount != oldPulseCount)||(!SLEEP_MODE)) {
         oldPulseCount = pulseCount;
-  
-        Serial.print("Flow Meter (pulsecount):");
-        Serial.println(pulseCount);
-  
+
+        if (DEBUG) {
+          Serial.print("Flow Meter (pulsecount):");
+          Serial.println(pulseCount);
+        }
         send(RiegoCounter.set(pulseCount));                  // Send  pulsecount value to gw in VAR1
   
         double volume = ((double)pulseCount/((double)PULSE_FACTOR));
         if ((volume != oldvolume)||(!SLEEP_MODE)) {
           oldvolume = volume;
-  
+        if (DEBUG) {
           Serial.print("Volumen Riego (m3):");
           Serial.println(volume, 3);
-  
+        }
           send(RiegoVolume.set(volume, 3));               // Send volume value to gw
         }
       }
     }
   
     // check RTC confidence
-    if (!Rtc.IsDateTimeValid()  && DEBUG) {
+    if (!Rtc.IsDateTimeValid()) {
         // Common Cuases:
         //    1) the battery on the device is low or even missing and the power line was disconnected
-        Serial.println("RTC lost confidence in the DateTime!");
+        Serial.println("ALERT: RTC lost confidence in the DateTime!");
     }
     
     // publish & update reading every 30 seconds
@@ -759,7 +735,6 @@ void loop () {
       Relays(7);
       Relays(8);
       GetDuracionRiego();
-      //GetIPControlador();
       GetZonasRiego();
       GetPruebaRiego();
       GetModoRiego();
@@ -786,15 +761,12 @@ void loop () {
         {
             RiegoNormal();
             if (DEBUG) {
-              Serial.println(">>Interupt Count: " + String(interuptCount) + "<<");
+              Serial.println(">>>>>Interupt Count: " + String(interuptCount) + " <<<<<<<<");
             }
         }
         else if (Regando) {
           RiegoNormal();
         }
-    //    float flowsensor = digitalRead(FLOW_SENSOR);
-    //    Serial.print("Flujo de Riego (l/min):");
-    //    Serial.println(flowsensor);
     }
 
     // Check keypad press reading every 1 second and display menu when Menu (Right) button was pressed
@@ -805,8 +777,7 @@ void loop () {
         serialHandler();
       }
       else {
-        //delay(50);  // Expected to avoid bouncing pulsations
-        wait(50);
+        wait(50); // Expected to avoid bouncing pulsations
         adc_key_in = analogRead(Key_Pin);    // Read the value of the pulsation
         key = get_key(adc_key_in);    // We get the button pressed
         if (key > 0 && PantallaEnReposo) {
@@ -842,20 +813,18 @@ void loop () {
 
 void GetDuracionRiego() {
   // Publish TiempoRiego to MySensors
-    String pubStringTemp = String(TiempoRiego/1000);
-
     if (DEBUG) {
-      Serial.println("--> Duracion Riego : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : DuracionRiego(11):" + pubStringTemp);
+      Serial.println("--> Duracion Riego : " + String(TiempoRiego/1000));
     }
     send(DuracionRiego.set(TiempoRiego/1000));
 }
 
 void SetDuracionRiego(int Tiempo) {
-  TiempoRiego=Tiempo*1000;
+  TiempoRiego = Tiempo;
+  TiempoRiego = TiempoRiego * 1000;
   
   if (DEBUG) {
-     Serial.println("--> Duracion Riego : " + String(TiempoRiego));
+     Serial.println("--> Update Duracion Riego : " + String(Tiempo));
    }
    saveState(11, Tiempo);
    GetDuracionRiego();
@@ -863,11 +832,8 @@ void SetDuracionRiego(int Tiempo) {
 
 void GetZonasRiego() {
     // Publish Zonas to MySensors
-    String pubStringTemp = String(Zonas);
-
     if (DEBUG) {
-      Serial.println("--> Zonas Riego : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : ZonasRiego(12):" + pubStringTemp);
+      Serial.println("--> Zonas Riego : " + String(Zonas));
     }
     send(ZonasRiego.set(Zonas));
 }
@@ -875,7 +841,7 @@ void GetZonasRiego() {
 void SetZonasRiego(int cZonas) {
   Zonas = cZonas;
   if (DEBUG) {
-    Serial.println("--> Zonas : " + Zonas);
+    Serial.println("--> Update Zonas : " + Zonas);
   }
   saveState(12, cZonas);
   GetZonasRiego();
@@ -883,11 +849,8 @@ void SetZonasRiego(int cZonas) {
 
 void GetPruebaRiego() {
     // Publish Pruebas Riego to MySensors
-    String pubStringTemp = String(PruebaRiego);
-
     if (DEBUG) {
-      Serial.println("--> Prueba Riego : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : PruebaRiegoJardin(13):" + pubStringTemp);
+      Serial.println("--> Prueba Riego : " + String(PruebaRiego));
     }
     send(PruebaRiegoJardin.set(PruebaRiego));
 }
@@ -902,18 +865,15 @@ void SetPruebaRiego(bool Prueba) {
   }
   
   if (DEBUG) {
-     Serial.println("--> Prueba Riego : " + String(PruebaRiego));
+     Serial.println("--> Update Prueba Riego : " + String(PruebaRiego));
   }
   
 }
 
 void GetModoRiego() {
     // Publish Modo Riego to MySensors
-    String pubStringTemp = String(Regar);
-
     if (DEBUG) {
-      Serial.println("--> Modo Riego : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : ModoRiego(14):" + pubStringTemp);
+      Serial.println("--> Modo Riego : " + String(Regar));
     }
     send(ModoRiego.set(Regar));
 }
@@ -921,7 +881,7 @@ void GetModoRiego() {
 void SetModoRiego(bool ModoRiegoN) {
   Regar = ModoRiegoN;
    if (DEBUG) {
-      Serial.println("--> Modo Riego : " + String(Regar));
+      Serial.println("--> Update Modo Riego : " + String(Regar));
    }
    saveState(14, ModoRiegoN);
    GetModoRiego();
@@ -946,11 +906,8 @@ void printDateTime() {
     }
 
     // Publish DateTime to MySensors
-    String pubStringTemp = String(datestring);
-
     if (DEBUG) {
-      Serial.println("--> Fecha y Hora : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : DateTime(15):" + pubStringTemp);
+      Serial.println("--> Fecha y Hora : " + String(datestring));
     }
     send(TimeDate.set(datestring));
 }
@@ -1033,14 +990,11 @@ String GetTimer1() {
             dt.Minute() );
 
     // Publish DateTime to MySensors
-    String pubStringTemp = String(datestring);
-
     if (DEBUG) {
-      Serial.println("--> Riego Timer 1 : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : RiegoTimer1(16):" + pubStringTemp);
+      Serial.println("--> Riego Timer 1 : " + String(datestring));
     }
     send(RiegoTimer1.set(datestring));
-    return pubStringTemp;
+    return String(datestring);
 }
 
 void SetTimer1(String TIME) {
@@ -1067,16 +1021,16 @@ void SetTimer1(String TIME) {
             DS3231AlarmOneControl_HoursMinutesSecondsMatch);
     Rtc.SetAlarmOne(alarm1);
     Rtc.LatchAlarmsTriggeredFlags();
+    if (DEBUG) {
+      Serial.println("--> Update Riego Timer 1 : " + String(TIME));
+    }
     GetTimer1();
 }
 
 void GetUsarTimer1() {   
     // Publish UsarTimer1 to MySensors
-    String pubStringTemp = String(UsarTimer1);
-
     if (DEBUG) {
-      Serial.println("--> Usar Timer1 : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : UsarRiegoTimer1(17):" + pubStringTemp);
+      Serial.println("--> Usar Timer1 : " +  String(UsarTimer1));
     }
     send(UsarRiegoTimer1.set(UsarTimer1));
 }
@@ -1101,14 +1055,11 @@ String GetTimer2() {
             dt.Minute() );
 
     // Publish DateTime to MySensors
-    String pubStringTemp = String(datestring);
-
     if (DEBUG) {
-      Serial.println("--> Riego Timer 2 : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : RiegoTimer2(18):" + pubStringTemp);
+      Serial.println("--> Riego Timer 2 : " + String(datestring));
     }
     send(RiegoTimer2.set(datestring));
-    return pubStringTemp;
+    return String(datestring);
 }
 
 void SetTimer2(String TIME) {
@@ -1133,16 +1084,16 @@ void SetTimer2(String TIME) {
             DS3231AlarmTwoControl_HoursMinutesMatch);
     Rtc.SetAlarmTwo(alarm2);
     Rtc.LatchAlarmsTriggeredFlags();
+    if (DEBUG) {
+      Serial.println("--> Update Riego Timer 2 : " + String(TIME));
+    }    
     GetTimer2();
 }
 
 void GetUsarTimer2() {   
-    // Publish UsarTimer1 to MQTT (Mosquitto)
-    String pubStringTemp = String(UsarTimer2);
-
+    // Publish UsarTimer1
     if (DEBUG) {
-      Serial.println("--> Usar Timer2 : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensaje MySensors : UsarRiegoTimer2(19):" + pubStringTemp);
+      Serial.println("--> Usar Timer2 : " + String(UsarTimer2));
     } 
     send(UsarRiegoTimer2.set(UsarTimer2));
 }
@@ -1197,8 +1148,10 @@ int Relays(int RelayNumber) {
       RelayNumber = RelayNumber -10;
     }
     RelayPowerState = digitalRead(RelayNumber+RelayNumber+29);
- 
-   if (SendStatus) {
+    if (DEBUG) {
+        Serial.println("--> Estado Relay" + String(RelayNumber) + " Power State : " + String(RelayPowerState));   
+    }
+    if (SendStatus) {
       switch(RelayNumber) {
         case 1:
           send(RiegoZona1.set(RelayPowerState));
@@ -1227,11 +1180,7 @@ int Relays(int RelayNumber) {
       }
      
     }
-    if (DEBUG) {
-        Serial.println("--> Estado Relay" + String(RelayNumber) + " Power State : " + String(RelayPowerState));   
-        Serial.println("<-- Enviando Mensaje MySensors: Relay" +String(RelayNumber) + " Power State : " + String(RelayPowerState)); 
-   }
-   return RelayPowerState;
+    return RelayPowerState;
 }
 
 void Humedad() { 
@@ -1245,14 +1194,10 @@ void Humedad() {
       lcd.print((int) h);
       lcd.print("%       ");
     }
-    //delay(2000);
-
+ 
     // Publish Humidity to MySensors
-    String pubStringTemp = String(int(h));
-
     if (DEBUG){
-      Serial.println("--> Humedad : " + pubStringTemp + "% " );
-      Serial.println("<-- Enviando Mensaje MySensors: HUM(10):" + pubStringTemp);
+      Serial.println("--> Humedad : " + String(int(h)) + "% " );
     }
     send(HUM.set(h,1));
 }
@@ -1264,15 +1209,10 @@ void Temperatura() {
       lcd.setCursor(0, 0);
       lcd.print("Temperatura: " + String((int) t) + "C"); 
     }
-    //delay(2000);
 
     // publish Temperature to MySensors
-    String pubStringTemp = String(int(t));
-
-    // Print Temperature to Serial
     if (DEBUG) {
-      Serial.println("--> Temperatura : " + pubStringTemp + "ºC " );
-      Serial.println("<-- Enviando Mensaje MySensors: TEMP(9):" + pubStringTemp);
+      Serial.println("--> Temperatura : " + String(int(t)) + " ºC " );
     }
     send(TEMP.set(t,1));
 }
@@ -1280,15 +1220,11 @@ void Temperatura() {
 void TemperaturaRtc() {
     //  Temperatura de modulo RTC
     RtcTemperature t = Rtc.GetTemperature();
-    //lcd.setCursor(0, 0);
-    //lcd.print("Temperatura Rtc: " && (int) t && "C"); 
     
     // publish Temperature to MySensors
     String pubStringTemp = (String)(int)t.AsFloat();
-
     if (DEBUG) {
       Serial.println("--> Temperatura Rtc: " + pubStringTemp + "ºC " );
-      Serial.println("<-- Enviando Mensaje MQTT: TEMP_RTC(20):" + pubStringTemp);
     }
     send(TEMP_RTC.set(t.AsFloat(),1));
 }
@@ -1437,11 +1373,8 @@ void RiegoSmart(int Duracion) {
 
 void GetRegar() {
  // Publish Estado Riego to MySensors
-    String pubStringTemp = String(Regando);
-
     if (DEBUG) {
-      Serial.println("--> Estado Regar : " + pubStringTemp);
-      Serial.println("<-- Enviando Mensage MySensors: RiegoJardin(21):" + pubStringTemp);
+      Serial.println("--> Estado Regar : " + String(Regando));
     }
     send(RiegoJardin.set(Regando));
 }
@@ -1449,13 +1382,13 @@ void GetRegar() {
 void SetRegar(bool Estado) {
   if (!Regando && Estado) {
     if (DEBUG) {
-      Serial.println("--> Estado Regar : A Regar!!!");
+      Serial.println("--> Update Regar : A Regar!!!");
     }
     RiegoNormal();
   }
   else if (Regando && !Estado){
     if (DEBUG) {
-      Serial.println("--> Estado Regar : Dejar de Regar!!!");
+      Serial.println("--> Update Regar : Dejar de Regar!!!");
     }
     Relays(ZonaRiego, RelayOff);
     ZonaRiego = 0;
@@ -2343,6 +2276,5 @@ void on_m4_item11_selected(MenuItem* p_menu_item)
   }
   wait(300);
   lcd.print("-->Completado!  ");
-  wait(1500);
-  //delay(1500); // so we can look the result on the LCD
+  wait(1500); // so we can look the result on the LCD
 }
