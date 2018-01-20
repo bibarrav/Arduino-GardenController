@@ -67,10 +67,10 @@ MyMessage RiegoCounter(23, V_VAR1);
 
 // Sensor de Flujo
 #define FLOW_SENSOR 3                  // The digital input you attached your sensor.  (Only 2 and 3 generates interrupt!)
-#define PULSE_FACTOR 1000              // Nummber of blinks per m3 of your meter (One rotation/liter)
+#define PULSE_FACTOR 4500              // Nummber of blinks per m3 of your meter (One rotation/liter)
 #define SLEEP_MODE false               // flowvalue can only be reported when sleep mode is false.
 #define MAX_FLOW 40                    // Max flow (l/min) value to report. This filters outliers.
-
+unsigned long currentTime = 0;
 double ppl = ((double)PULSE_FACTOR)/1000;        // Pulses per liter
 
 volatile unsigned long pulseCount = 0;
@@ -80,10 +80,10 @@ bool pcReceived = false;
 unsigned long oldPulseCount = 0;
 unsigned long newBlink = 0;
 double oldflow = 0;
-double volume =0;
-double oldvolume =0;
-unsigned long lastSend =0;
-unsigned long lastPulse =0;
+double volume = 0;
+double oldvolume = 0;
+unsigned long lastSend = 0;
+unsigned long lastPulse = 0;
 
 unsigned long SEND_FREQUENCY = 2000; // Minimum time between send (in milliseconds). We don't want to spam the gateway.
 
@@ -276,7 +276,8 @@ void setup () {
     //Setup Flow Sensor
     // initialize our digital pins internal pullup resistor so one pulse switches from high to low (less distortion)
     pinMode(FLOW_SENSOR, INPUT_PULLUP);
-    pulseCount = oldPulseCount = 0;
+    pulseCount = 0;
+    oldPulseCount = 0;
     //Fetch last known pulse count value from gw
     request(23, V_VAR1);
     lastSend = lastPulse = millis();
@@ -515,7 +516,7 @@ void receive(const MyMessage &message) {
      // Write some debug info
     String messageData;
     if (DEBUG) {
-      Serial.print("Incoming message update for sensor:");
+      Serial.print("<-- Incoming message update for sensor:");
       Serial.print(message.sensor);
       Serial.print(", New value: ");
     }
@@ -588,8 +589,11 @@ void receive(const MyMessage &message) {
         break;
       case 22:
         //Update DEBUG Flag
-        if (message.type==V_STATUS) DEBUG=message.getBool();
-        messageData = message.getBool();
+        if (message.type==V_STATUS) {
+          messageData = message.getBool();
+          DEBUG=message.getBool();
+          saveState(22, DEBUG);
+        }
         break;
       case 23:
         if (message.type==V_VAR1) {
@@ -607,7 +611,7 @@ void receive(const MyMessage &message) {
      }
 
      if (DEBUG) {
-       Serial.println(messageData);
+       Serial.println(String(messageData));
      }
      /* MySensors message class Getter methods 
       char* getStream(char *buffer) const;
@@ -651,16 +655,16 @@ void onPulse() {
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 void loop () {
     // FlowMeter loop process
-    unsigned long currentTime = millis();
+    currentTime = millis();
     // Only send values at a maximum frequency or woken up from sleep
     if (SLEEP_MODE || (currentTime - lastSend > SEND_FREQUENCY)) {
       lastSend=currentTime;
   
-      if (!pcReceived) {
+      /*if (!pcReceived) {
         //Last Pulsecount not yet received from controller, request it again
         request(23, V_VAR1);
         return;
-      }
+      }*/
   
       if (!SLEEP_MODE && flow != oldflow) {
         oldflow = flow;
@@ -675,18 +679,18 @@ void loop () {
         }
       }
   
-      // No Pulse count received in 2min
-      if(currentTime - lastPulse > 120000) {
+      // No Pulse count received in 30 segs
+      /*if ((currentTime - lastPulse > 30000) && (flow != 0)) {
         flow = 0;
         if (DEBUG) {
-          Serial.print("No se ha recibido pulsos en los ultimos 2 min.");
+          Serial.print("No se ha recibido pulsos en los ultimos 30 segundos.");
           Serial.print("Flujo de Riego : ");
           Serial.println(flow);
         }
-      }
+      }*/
   
       // Pulse count has changed
-      if ((pulseCount != oldPulseCount)||(!SLEEP_MODE)) {
+      if ((pulseCount != oldPulseCount) && (!SLEEP_MODE)) {
         oldPulseCount = pulseCount;
 
         if (DEBUG) {
@@ -707,12 +711,12 @@ void loop () {
       }
     }
   
-    // check RTC confidence
+    /* check RTC confidence
     if (!Rtc.IsDateTimeValid()) {
         // Common Cuases:
         //    1) the battery on the device is low or even missing and the power line was disconnected
         Serial.println("ALERT: RTC lost confidence in the DateTime!");
-    }
+    }*/
     
     // publish & update reading every 30 seconds
     if (millis() > (timeA + 30000)) {
