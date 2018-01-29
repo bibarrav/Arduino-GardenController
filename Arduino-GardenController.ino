@@ -11,7 +11,7 @@ boolean DEBUG = false; //Enable debug prints to serial monitor
 // Enable and select MySensors radio type attached
 #define MY_RADIO_NRF24
 //#define MY_RADIO_RFM69
-#define MY_RF24_PA_LEVEL RF24_PA_HIGH // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH or RF24_PA_MAX
+#define MY_RF24_PA_LEVEL RF24_PA_MAX // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH or RF24_PA_MAX
 // Enable MySensors repeater functionality for this node
 //#define MY_REPEATER_FEATURE
 // W5100 Ethernet module SPI enable (optional if using a shield/module that manages SPI_EN signal)
@@ -61,18 +61,21 @@ MyMessage UsarRiegoTimer2(19, V_STATUS);
 MyMessage TEMP_RTC(20, V_TEMP);
 MyMessage RiegoJardin(21, V_STATUS);
 MyMessage RiegoDebug(22, V_STATUS);
+MyMessage DebugMessage(22, V_TEXT);
 MyMessage RiegoFlow(23, V_FLOW);
 MyMessage RiegoVolume(23, V_VOLUME);
 MyMessage RiegoCounter(23, V_VAR1);
+MyMessage FlowMeter(23, V_STATUS);
+MyMessage WatchDog(24, V_STATUS);
 
 // Sensor de Flujo
 #define FLOW_SENSOR 3                  // The digital input you attached your sensor.  (Only 2 and 3 generates interrupt!)
 #define PULSE_FACTOR 4500              // Nummber of blinks per m3 of your meter (One rotation/liter)
 #define SLEEP_MODE false               // flowvalue can only be reported when sleep mode is false.
 #define MAX_FLOW 40                    // Max flow (l/min) value to report. This filters outliers.
+bool StatusFlowMeter = false;
 unsigned long currentTime = 0;
 double ppl = ((double)PULSE_FACTOR)/1000;        // Pulses per liter
-
 volatile unsigned long pulseCount = 0;
 volatile unsigned long lastBlink = 0;
 volatile double flow = 0;
@@ -84,9 +87,9 @@ double volume = 0;
 double oldvolume = 0;
 unsigned long lastSend = 0;
 unsigned long lastPulse = 0;
-
 unsigned long SEND_FREQUENCY = 2000; // Minimum time between send (in milliseconds). We don't want to spam the gateway.
 
+bool StatusWatchDog = false;
 
 #include <MenuSystem.h>
 
@@ -110,7 +113,6 @@ int Zonas = 4;
 bool Regar = false;
 bool UsarTimer1 = false;
 bool UsarTimer2 = false;
-//DEBUG = loadState(22)?true:false;
 
 //Program Control Variables
 unsigned long TiempoRiegoTemp;
@@ -126,7 +128,7 @@ int adc_key_val[5] ={50,200,400,600,800};
 int adc_key_in;
 int key=-1;
 int oldkey=-1;
-bool PantallaEnReposo = false;
+bool LCDSleeping = false;
 // Menu variables
 bool ShowingMenu = false;
 MenuSystem ms;
@@ -238,6 +240,7 @@ volatile bool interuptFlag = false;
 
 void InteruptServiceRoutine()
 {
+    wdt_reset(); //WatchDog Timer Reset...
     // since this interupted any other running code,
     // don't do anything that takes long and especially avoid
     // any communications calls within this routine
@@ -271,18 +274,21 @@ void setup () {
     wdt_disable(); //WatchDog Timer Initializing...
     
     //Setup Serial speed
-    Serial.begin(115200);
-
+    if (DEBUG) {
+      Serial.begin(115200);
+    }
+    
     //Setup Flow Sensor
-    // initialize our digital pins internal pullup resistor so one pulse switches from high to low (less distortion)
-    pinMode(FLOW_SENSOR, INPUT_PULLUP);
-    pulseCount = 0;
-    oldPulseCount = 0;
-    //Fetch last known pulse count value from gw
-    request(23, V_VAR1);
-    lastSend = lastPulse = millis();
-
-    attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
+     if (StatusFlowMeter) {
+      // initialize our digital pins internal pullup resistor so one pulse switches from high to low (less distortion)
+      pinMode(FLOW_SENSOR, INPUT_PULLUP);
+      pulseCount = 0;
+      oldPulseCount = 0;
+      //Fetch last known pulse count value from gw
+      request(23, V_VAR1);
+      lastSend = lastPulse = millis();
+      attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), onPulse, FALLING);
+    }
     
     // Setup all relay pins
     pinMode(Relay1, OUTPUT);
@@ -332,6 +338,14 @@ void setup () {
 
     //RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
 
+    if (!Rtc.GetIsRunning())
+    {
+        if (DEBUG) {
+          Serial.println("RTC was not actively running, starting now"); 
+        }
+        Rtc.SetIsRunning(true);
+    }
+
     if (!Rtc.IsDateTimeValid()) 
     {
         // Common Cuases:
@@ -353,14 +367,6 @@ void setup () {
         pubStringTemp.toCharArray(message_buff, pubStringTemp.length()+1);
         mqtt.publish("openHAB/Jardin/RiegoEstadoRelojSync", message_buff);
         */
-    }
-
-    if (!Rtc.GetIsRunning())
-    {
-        if (DEBUG) {
-          Serial.println("RTC was not actively running, starting now"); 
-        }
-        Rtc.SetIsRunning(true);
     }
 
     // never assume the Rtc was last configured by you, so
@@ -424,8 +430,10 @@ void setup () {
     if (DEBUG) {  
       Serial.println("Menu Inicializado.");
     }
-    
-    wdt_enable(WDTO_8S); //WathDog Timer Start...
+
+    if (StatusWatchDog) {
+      wdt_enable(WDTO_8S); //WathDog Timer Start...
+    }
     
     //Obtener/Enviar estados en Arduino a MySensors Gateway/Controlador
     printDateTime();
@@ -451,6 +459,8 @@ void setup () {
     TemperaturaRtc();
     Temperatura();
     send(RiegoDebug.set(DEBUG));
+    send(FlowMeter.set(StatusFlowMeter));
+    send(WatchDog.set(StatusWatchDog));
 }
 
 //Load States from EEPROM
@@ -469,6 +479,8 @@ void before() {
   UsarTimer1 = loadState(17)?true:false;
   UsarTimer2 = loadState(19)?true:false;
   DEBUG = loadState(22)?true:false;
+  StatusFlowMeter = loadState(23)?true:false;
+  StatusWatchDog = loadState(24)?true:false;
 
   //List all saved data
   if (DEBUG) {
@@ -509,6 +521,7 @@ void presentation()
   present(21, S_BINARY, "Riego Jardin");
   present(22, S_BINARY, "Riego DEBUG");
   present(23, S_WATER, "Flujo Riego");
+  present(24, S_BINARY, "Usar WatchDog");
 }
 
 void receive(const MyMessage &message) {
@@ -524,73 +537,143 @@ void receive(const MyMessage &message) {
     switch(message.sensor) {
       case 5:
         //Process change state for Relay5
-        if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_STATUS) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          Relays(message.sensor, message.getInt());
+        }
         break;
       case 6:
         //Process change state for Relay6
-        if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_STATUS) { // Relays(message.sensor, message.getInt());
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          Relays(message.sensor, RelayOn);
+          wait(200);
+          Relays(message.sensor, RelayOff);
+        }
         break;
       case 7:
         //Process change state for Relay7
-        if (message.type==V_STATUS) Relays(message.sensor, message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_STATUS) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          Relays(message.sensor, message.getInt());
+        }
         break;
       case 11:
         //Update duraccion riego
-        if (message.type==V_CUSTOM) SetDuracionRiego(message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_CUSTOM) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetDuracionRiego(message.getInt());
+        }
         break;
       case 12:
         //Update numero de zonas Riego
-        if (message.type==V_CUSTOM) SetZonasRiego(message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_CUSTOM) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetZonasRiego(message.getInt());
+        }
         break;
       case 13:
         //Update Prueba zonas Riego
-        if (message.type==V_STATUS) SetPruebaRiego(message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_STATUS) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetPruebaRiego(message.getInt());
+        }
         break;
       case 14:
         //Update Modo Riego
-        if (message.type==V_STATUS) SetModoRiego(message.getInt());
-        messageData = message.getInt();
+        if (message.type==V_STATUS) {
+          messageData = message.getInt();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetModoRiego(message.getInt());
+        }
         break;
       case 15:
         //Update Fecha-Hora Rtc Riego
-        if (message.type==V_TEXT) updateDateTime(message.getString());
-        messageData = message.getString();
+        if (message.type==V_TEXT) {
+          messageData = message.getString();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          updateDateTime(message.getString());
+        }
         break;
       case 16:
         // Update Timer1 Riego
-        if (message.type==V_TEXT) SetTimer1(message.getString());
-        messageData = message.getString();
+        if (message.type==V_TEXT) {
+          messageData = message.getString();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetTimer1(message.getString());
+        }
         break;
       case 17:
         //Update Usar Timer1 Riego
-        if (message.type==V_STATUS) SetUsarTimer1(message.getBool());
-        messageData = message.getBool();
+        if (message.type==V_STATUS) {
+          messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetUsarTimer1(message.getBool());
+        }
         break;
       case 18:
         // Update Timer2 Riego
-        if (message.type==V_TEXT) SetTimer2(message.getString());
-        messageData = message.getString();
+        if (message.type==V_TEXT) {
+          messageData = message.getString();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetTimer2(message.getString());
+        }
         break;
       case 19:
         //Update Usar Timer2 Riego
-        if (message.type==V_STATUS) SetUsarTimer2(message.getBool());
-        messageData = message.getBool();
+        if (message.type==V_STATUS) {
+          messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetUsarTimer2(message.getBool());
+        }
         break;
       case 21:
         //Update Status Riego Jardin --> Regar/Dejar de regar
-        if (message.type==V_STATUS) SetRegar(message.getBool());
-        messageData = message.getBool();
+        if (message.type==V_STATUS) {
+          messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+          SetRegar(message.getBool());
+        }
         break;
       case 22:
         //Update DEBUG Flag
         if (message.type==V_STATUS) {
           messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
           DEBUG=message.getBool();
           saveState(22, DEBUG);
         }
@@ -598,6 +681,9 @@ void receive(const MyMessage &message) {
       case 23:
         if (message.type==V_VAR1) {
           unsigned long gwPulseCount=message.getULong();
+          if (DEBUG) {
+            Serial.println(String(gwPulseCount));
+          }
           pulseCount += gwPulseCount;
           flow=oldflow=0;
           pcReceived = true;
@@ -606,13 +692,26 @@ void receive(const MyMessage &message) {
             Serial.println(pulseCount);
           }
         }
-        messageData = message.getULong();
+       if (message.type==V_STATUS) {
+        messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+        StatusFlowMeter=message.getBool();
+        saveState(23, StatusFlowMeter);
+       }
        break;
+     case 24:
+       if (message.type==V_STATUS) {
+        messageData = message.getBool();
+          if (DEBUG) {
+            Serial.println(String(messageData));
+          }
+        StatusWatchDog=message.getBool();
+        saveState(24, StatusWatchDog);
+       }
      }
 
-     if (DEBUG) {
-       Serial.println(String(messageData));
-     }
      /* MySensors message class Getter methods 
       char* getStream(char *buffer) const;
       char* getString(char *buffer) const;
@@ -654,6 +753,7 @@ void onPulse() {
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 void loop () {
+    wdt_reset(); //WatchDog Timer Reset...
     // FlowMeter loop process
     currentTime = millis();
     // Only send values at a maximum frequency or woken up from sleep
@@ -720,6 +820,7 @@ void loop () {
     
     // publish & update reading every 30 seconds
     if (millis() > (timeA + 30000)) {
+      wdt_reset(); //WatchDog Timer Reset...
       timeA = millis();
       if (MostrarTempHum) {
         Humedad();
@@ -748,18 +849,22 @@ void loop () {
       GetUsarTimer2();
       GetRegar();
       send(RiegoDebug.set(DEBUG));
+      send(FlowMeter.set(StatusFlowMeter));
+      send(WatchDog.set(StatusWatchDog));
      }
 
     // put lcd screen standby
-    if (millis() > (timeB + 1800000)) {
+    if (millis() > (timeB + 600000)) {
+      wdt_reset(); //WatchDog Timer Reset...
       timeB = millis();
-      PantallaEnReposo = true;
+      LCDSleeping = true;
       lcd.noDisplay();
       digitalWrite(LCDBacklight, LOW);
     }
     
     // check schedule trigger (RTC Alarm interrupt) every 1 seconds
-    if (millis() > (timeC + 1000)) {
+    if (millis() > (timeC + 2000)) {
+      wdt_reset(); //WatchDog Timer Reset...
       timeC = millis();
         if (Alarmed() && !Regando)
         {
@@ -772,22 +877,24 @@ void loop () {
           RiegoNormal();
         }
     }
-
+    wdt_reset(); //WatchDog Timer Reset...
     // Check keypad press reading every 1 second and display menu when Menu (Right) button was pressed
     if ((millis() > (timeD + 1000)) || ShowingMenu) {
       timeD = millis();
       if (ShowingMenu){
         updateDisplay();
+        wdt_reset(); //WatchDog Timer Reset...
         serialHandler();
+        wdt_reset(); //WatchDog Timer Reset...
       }
       else {
         wait(50); // Expected to avoid bouncing pulsations
         adc_key_in = analogRead(Key_Pin);    // Read the value of the pulsation
         key = get_key(adc_key_in);    // We get the button pressed
-        if (key > 0 && PantallaEnReposo) {
+        if (key > 0 && LCDSleeping) {
           lcd.display();
           digitalWrite(LCDBacklight, HIGH);
-          PantallaEnReposo = false;
+          LCDSleeping = false;
         }
         if (key == 4) {
             timeE = millis();
@@ -800,6 +907,7 @@ void loop () {
 
     // Exit menu for inactivity
     if ((millis() > (timeE + 10000)) && ShowingMenu) {
+       wdt_reset(); //WatchDog Timer Reset...
        lcd.clear();
        ShowingMenu = false;
        menuSelected = false;
@@ -864,14 +972,12 @@ void SetPruebaRiego(bool Prueba) {
       PruebaRiego = Prueba;
       TiempoRiegoPrueba = TiempoRiego;
       TiempoRiego = 20000;
+      if (DEBUG) {
+        Serial.println("--> Update Prueba Riego : " + String(PruebaRiego));
+      }
       GetPruebaRiego();
       RiegoNormal();
-  }
-  
-  if (DEBUG) {
-     Serial.println("--> Update Prueba Riego : " + String(PruebaRiego));
-  }
-  
+  } 
 }
 
 void GetModoRiego() {
@@ -904,7 +1010,7 @@ void printDateTime() {
             dt.Hour(),
             dt.Minute(),
             dt.Second() );
-    if (!ShowingMenu){
+    if (!ShowingMenu && !LCDSleeping){
       lcd.setCursor(0, 1);
       lcd.print(datestring);      
     }
@@ -1112,7 +1218,7 @@ void SetUsarTimer2(bool Estado) {
 }
 
 void Relays(int RelayNumber, int RelayPower) {
-    if (!ShowingMenu){
+    if (!ShowingMenu && !LCDSleeping){
       lcd.setCursor(0, 1);
       lcd.print("Relay " + String(RelayNumber));
     }
@@ -1121,20 +1227,20 @@ void Relays(int RelayNumber, int RelayPower) {
     {
       //No activar zonas de riego en paralelo, solo una a la vez!!!
       if ((Relays(11) == RelayOff && Relays(12) == RelayOff && Relays(13) == RelayOff && Relays(14) == RelayOff) || (RelayNumber != 1 && RelayNumber != 2 && RelayNumber != 3 && RelayNumber != 4)) {
-       if (!ShowingMenu){
+       if (!ShowingMenu && !LCDSleeping){
           lcd.print(": On       ");
         }
         digitalWrite(RelayNumber+RelayNumber+29, RelayPower);
       }
       else {
-        if (!ShowingMenu){
+        if (!ShowingMenu && !LCDSleeping){
           lcd.print(": --       ");
         }
       }
     }
     else
     {
-      if (!ShowingMenu){
+      if (!ShowingMenu && !LCDSleeping){
         lcd.print(": Off      ");
       }
       digitalWrite(RelayNumber+RelayNumber+29, RelayPower);
@@ -1192,7 +1298,7 @@ void Humedad() {
     float h = dht.readHumidity();
 
     // Print Temperature to LCD
-    if (!ShowingMenu){
+    if (!ShowingMenu && !LCDSleeping){
       lcd.setCursor(0, 0);
       lcd.print("Humedad Rel: "); 
       lcd.print((int) h);
@@ -1209,7 +1315,7 @@ void Humedad() {
 void Temperatura() {
     float t = dht.readTemperature();
 
-    if (!ShowingMenu){
+    if (!ShowingMenu && !LCDSleeping){
       lcd.setCursor(0, 0);
       lcd.print("Temperatura: " + String((int) t) + "C"); 
     }
@@ -1272,6 +1378,7 @@ bool Alarmed() {
 }
 
 void RiegoNormal() {
+  wdt_reset(); //WatchDog Timer Reset...
   if (DEBUG){
     Serial.println("Procesando riego...");
   }
@@ -1283,11 +1390,13 @@ void RiegoNormal() {
       }
       TiempoRiegoTemp = millis();
       Relays(ZonaRiego, RelayOff);
+      wdt_reset(); //WatchDog Timer Reset...
       if (ZonaRiego < Zonas) {
         ZonaRiego++;
-        wait(500);
+        //wait(500);
         Relays(ZonaRiego, RelayOn);
-        if (Relays(ZonaRiego) == RelayOn) {
+        //wait(200);
+        if (Relays(ZonaRiego + 10) == RelayOn) {
           if (DEBUG) {
             Serial.println("Cambiando Zona de Riego...OK.");          
           }
@@ -1299,7 +1408,7 @@ void RiegoNormal() {
         }
       }
       else {
-        if (!ShowingMenu) {
+        if (!ShowingMenu && !LCDSleeping) {
           lcd.setCursor(0,0);
           lcd.print("Ciclo Terminado   "); 
         }
@@ -1318,9 +1427,11 @@ void RiegoNormal() {
       }
     }
     else {
+      wdt_reset(); //WatchDog Timer Reset...
       if (DEBUG) {
         Serial.println("Verificando Zona de Riego...");
       }
+      //wait(200);
       if (Relays(ZonaRiego + 10) == RelayOn) {
         if (DEBUG) {
           Serial.println("Verificando Zona de Riego...Encendido.");
@@ -1331,6 +1442,7 @@ void RiegoNormal() {
           Serial.println("Verificando Zona de Riego...Apagado, encendiendo...");
         }              
         Relays(ZonaRiego, RelayOn);
+        //wait(200);
         if (Relays(ZonaRiego + 10) == RelayOn) {
           if (DEBUG) {
             Serial.println("Verificando Zona de Riego...Apagado, encendiendo...OK.");
@@ -1345,7 +1457,7 @@ void RiegoNormal() {
     }
   }
   else {
-      if (!ShowingMenu) {
+      if (!ShowingMenu && !LCDSleeping) {
         lcd.setCursor(0,0);
         lcd.print("Iniciando ciclo!     "); 
       }
@@ -1357,8 +1469,9 @@ void RiegoNormal() {
       Regando = true;
       GetRegar();
       ZonaRiego = 1;
-      Relays(1,RelayOn);
-      if (Relays(1) == RelayOn) {
+      Relays(ZonaRiego,RelayOn);
+      //wait(200);
+      if (Relays(ZonaRiego + 10) == RelayOn) {
         if (DEBUG) {
           Serial.println("Iniciando ciclo de riego...OK.");          
         }
@@ -1413,7 +1526,7 @@ void serialHandler() {
   adc_key_in = analogRead(Key_Pin);    // Read the value of the pulsation
   key = get_key(adc_key_in);    // We get the button pressed
   wait(100);
-  
+  wdt_reset(); //WatchDog Timer Reset...
   if (key !=-1)   // if keypress is detected
   {
     timeE = millis();
@@ -1606,8 +1719,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1620,8 +1733,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1634,8 +1747,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1648,8 +1761,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1665,8 +1778,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1681,8 +1794,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1695,8 +1808,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1709,8 +1822,8 @@ void serialHandler() {
             menuSelected = false;
             setMenu = NONE;
             lcd.noBlink();
+            wdt_reset(); //WatchDog Timer Reset...
             wait(1500);
-            //delay(1500);
             displayMenu();
             break;
           }
@@ -1760,6 +1873,7 @@ void displayMenu() {
 }
 
 void updateDisplay() {
+  wdt_reset(); //WatchDog Timer Reset...
   if(menuSelected && EditMode) {
     EditMode = false;
 
@@ -1867,6 +1981,7 @@ void on_mu1_item1_selected(MenuItem* p_menu_item)
             dt.Second() );
       lcd.setCursor(0, 1);
       lcd.print(datestring);     
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1896,6 +2011,7 @@ void on_mu2_item1_selected(MenuItem* p_menu_item)
   lcd.setCursor(0,1);
   lcd.print("Miliseg : ");
   lcd.print(TiempoRiego);
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1914,6 +2030,7 @@ void on_mu2_item3_selected(MenuItem* p_menu_item)
   lcd.setCursor(0,1);
   lcd.print("               ");
   lcd.print(Zonas);
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1936,6 +2053,7 @@ void on_mu2_item5_selected(MenuItem* p_menu_item)
   else {
     lcd.print("--> Ocupado!!!  ");
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1951,6 +2069,7 @@ void on_mu2_item6_selected(MenuItem* p_menu_item)
   if (DEBUG) {
     Serial.print("--> Menu Ver Timer 1 : " + Timer1);
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1977,6 +2096,7 @@ void on_mu2_item8_selected(MenuItem* p_menu_item)
   if (DEBUG) {
     Serial.print("--> Menu Usar Timer 1 : " + String(UsarTimer1));
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -1992,6 +2112,7 @@ void on_mu2_item9_selected(MenuItem* p_menu_item)
   if (DEBUG) {
     Serial.print("--> Menu Ver Timer 2 : " + String(Timer2));
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2017,7 +2138,8 @@ void on_mu2_item11_selected(MenuItem* p_menu_item)
   }
   if (DEBUG) {
     Serial.print("--> Menu Usar Timer 2 : " + String(UsarTimer2));
-  }  
+  }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2033,6 +2155,7 @@ void on_mu2_item12_selected(MenuItem* p_menu_item)
   if (DEBUG) {
 //    Serial.print("-->Timer 3 : " + Timer3);
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2056,6 +2179,7 @@ void on_mu2_item14_selected(MenuItem* p_menu_item)
   else {
     lcd.print("--> Apagado!    ");
   } */
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2071,6 +2195,7 @@ void on_mu2_item15_selected(MenuItem* p_menu_item)
   if (DEBUG) {
 //    Serial.print("-->Timer 4 : " + Timer4);
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2094,6 +2219,7 @@ void on_mu2_item17_selected(MenuItem* p_menu_item)
   else {
     lcd.print("--> Apagado!    ");
   } */
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2109,6 +2235,7 @@ void on_mu3_item1_selected(MenuItem* p_menu_item)
 { //Ver Temperatura
   lcd.setCursor(0,1);
   lcd.print("MU3-Item1 Select  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2117,6 +2244,7 @@ void on_mu3_item2_selected(MenuItem* p_menu_item)
 { //Ver Humedad
   lcd.setCursor(0,1);
   lcd.print("MU3-Item2 Select  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2125,6 +2253,7 @@ void on_mu3_item3_selected(MenuItem* p_menu_item)
 { //Ver Temp Reloj
   lcd.setCursor(0,1);
   lcd.print("MU3-Item3 Select  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2133,6 +2262,7 @@ void on_mu3_item4_selected(MenuItem* p_menu_item)
 { //Ver Flujo
   lcd.setCursor(0,1);
   lcd.print("MU3-Item4 Select  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2141,6 +2271,7 @@ void on_mu3_item5_selected(MenuItem* p_menu_item)
 { //Ver Luminosidad
   lcd.setCursor(0,1);
   lcd.print("MU3-Item5 Select  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2156,6 +2287,7 @@ void on_m4_item1_selected(MenuItem* p_menu_item)
     lcd.print("H: ");
     lcd.print(__TIME__);
     lcd.print("         ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2168,6 +2300,7 @@ void on_m4_item2_selected(MenuItem* p_menu_item)
   lcd.print(" ");
 //  lcd.print(Ethernet.localIP());
   lcd.print("       ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2191,6 +2324,7 @@ void on_m4_item4_selected(MenuItem* p_menu_item)
     lcd.print("--> Apagado!    ");
   }
   saveState(22, DEBUG);
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2207,6 +2341,7 @@ void on_m4_item5_selected(MenuItem* p_menu_item)
   else {
     lcd.print("--> Smart!      ");
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2223,6 +2358,7 @@ void on_m4_item6_selected(MenuItem* p_menu_item)
   else {
     lcd.print("--> Smart!      ");
   }
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2234,6 +2370,7 @@ void on_m4_item7_selected(MenuItem* p_menu_item)
   lcd.setCursor(0,1);
 //  lcd.print(MQTT_SERVER);
   lcd.print("          ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2253,6 +2390,7 @@ void on_m4_item9_selected(MenuItem* p_menu_item)
   lcd.print("          ");
 //  lcd.print(MQTT_SERVER_PORT);
   lcd.print("          ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500);
   //delay(1500); // so we can look the result on the LCD
 }
@@ -2280,5 +2418,6 @@ void on_m4_item11_selected(MenuItem* p_menu_item)
   }
   wait(300);
   lcd.print("-->Completado!  ");
+  wdt_reset(); //WatchDog Timer Reset...
   wait(1500); // so we can look the result on the LCD
 }
