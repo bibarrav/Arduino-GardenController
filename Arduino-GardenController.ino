@@ -1,10 +1,9 @@
 #include <avr/wdt.h> //WatchDog Timer Library
+#include <avr/pgmspace.h>
 
 boolean DEBUG = false; //Enable debug prints to serial monitor
 // Enable debug prints of MySensors to serial monitor
-#if (DEBUG)
-  #define MY_DEBUG 
-#endif
+#define MY_DEBUG
 
 #define MY_NODE_ID 3
 #define MY_PARENT_NODE_ID 1
@@ -91,8 +90,6 @@ unsigned long SEND_FREQUENCY = 2000; // Minimum time between send (in millisecon
 
 bool StatusWatchDog = false;
 
-#include <MenuSystem.h>
-
 // Define Relay 8 channel pins
 #define Relay1 31
 #define Relay2 33
@@ -129,6 +126,8 @@ int adc_key_in;
 int key=-1;
 int oldkey=-1;
 bool LCDSleeping = false;
+
+#include <MenuSystem.h>
 // Menu variables
 bool ShowingMenu = false;
 MenuSystem ms;
@@ -162,16 +161,10 @@ MenuItem mu3_mi4("Ver Flujo");
 MenuItem mu3_mi5("Ver Luminosidad");
 Menu mu4("Sistema");
 MenuItem m4_mi1("Ver Compilacion");
-MenuItem m4_mi2("Ver Direccion IP");
-MenuItem m4_mi3("Edit Direccion IP");
-MenuItem m4_mi4("Modo Depuracion");
-MenuItem m4_mi5("Ver Modo Riego");
-MenuItem m4_mi6("Edit Modo Riego");
-MenuItem m4_mi7("Ver MQTT-SVR IP");
-MenuItem m4_mi8("Edit MQTT-SVR IP");
-MenuItem m4_mi9("Ver MQTT-SVR PRT");
-MenuItem m4_mi10("Edit MQTT-SVR PRT");
-MenuItem m4_mi11("Reinicializar!");
+MenuItem m4_mi2("Modo Depuracion");
+MenuItem m4_mi3("Ver Modo Riego");
+MenuItem m4_mi4("Edit Modo Riego");
+MenuItem m4_mi5("Reinicializar!");
 // menuSelected:  State var that indicates that a menu item has been
 //                selected. The plan is to update acordingly the LCD
 //                if we want to use the display to other thing
@@ -196,39 +189,39 @@ unsigned long timeE;
 #endif
 
 //RealTime Clock
-// CONNECTIONS:
-// DS3231 SDA --> SDA
-// DS3231 SCL --> SCL
-// DS3231 VCC --> 3.3v or 5v
-// DS3231 GND --> GND
-// SQW --->  (Pin19) Don't forget to pullup (4.7k to 10k to VCC)
+  // CONNECTIONS:
+  // DS3231 SDA --> SDA
+  // DS3231 SCL --> SCL
+  // DS3231 VCC --> 3.3v or 5v
+  // DS3231 GND --> GND
+  // SQW --->  (Pin19) Don't forget to pullup (4.7k to 10k to VCC)
 
-/* for software wire use below
-#include <SoftwareWire.h>  // must be included here so that Arduino library object file references work
-#include <RtcDS3231.h>
+  /* for software wire use below
+  #include <SoftwareWire.h>  // must be included here so that Arduino library object file references work
+  #include <RtcDS3231.h>
 
-SoftwareWire myWire(SDA, SCL);
-RtcDS3231<SoftwareWire> Rtc(myWire);
- for software wire use above */
+  SoftwareWire myWire(SDA, SCL);
+  RtcDS3231<SoftwareWire> Rtc(myWire);
+  for software wire use above */
 
-/* for normal hardware wire use below */
+  /* for normal hardware wire use below */
 #include <Wire.h> // must be included here so that Arduino library object file references work
 #include <RtcDS3231.h>
 RtcDS3231<TwoWire> Rtc(Wire);
 /* for normal hardware wire use above */
 
-// Interrupt Pin Lookup Table
-// (copied from Arduino Docs)
-//
-// CAUTION:  The interrupts are Arduino numbers NOT Atmel numbers
-//   and may not match (example, Mega2560 int.4 is actually Atmel Int2)
-//   this is only an issue if you plan to use the lower level interupt features
-//
-// Board           int.0    int.1   int.2   int.3   int.4   int.5
-// ---------------------------------------------------------------
-// Uno, Ethernet    2       3
-// Mega2560         2       3       21      20     [19]      18 
-// Leonardo         3       2       0       1       7
+  // Interrupt Pin Lookup Table
+  // (copied from Arduino Docs)
+  //
+  // CAUTION:  The interrupts are Arduino numbers NOT Atmel numbers
+  //   and may not match (example, Mega2560 int.4 is actually Atmel Int2)
+  //   this is only an issue if you plan to use the lower level interupt features
+  //
+  // Board           int.0    int.1   int.2   int.3   int.4   int.5
+  // ---------------------------------------------------------------
+  // Uno, Ethernet    2       3
+  // Mega2560         2       3       21      20     [19]      18 
+  // Leonardo         3       2       0       1       7
 
 #define RtcSquareWavePin 19 // Mega2560
 #define RtcSquareWaveInterrupt 4 // Mega2560
@@ -253,13 +246,13 @@ void InteruptServiceRoutine()
 #define DHTPIN 22     // what pin we're connected to
 // Uncomment whatever type you're using!
 #define DHTTYPE DHT11   // DHT 11 
-//#define DHTTYPE DHT22   // DHT 22  (AM2302)
-//#define DHTTYPE DHT21   // DHT 21 (AM2301)
+  //#define DHTTYPE DHT22   // DHT 22  (AM2302)
+  //#define DHTTYPE DHT21   // DHT 21 (AM2301)
 
-// Connect pin 1 (on the left) of the sensor to +5V
-// Connect pin 2 of the sensor to whatever your DHTPIN is
-// Connect pin 4 (on the right) of the sensor to GROUND
-// Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
+  // Connect pin 1 (on the left) of the sensor to +5V
+  // Connect pin 2 of the sensor to whatever your DHTPIN is
+  // Connect pin 4 (on the right) of the sensor to GROUND
+  // Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -268,7 +261,6 @@ DHT dht(DHTPIN, DHTTYPE);
 #define LCDBacklight 44 //LCD Pin Backlight control
 // initialize the library with the numbers of the interface pins
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
-
 
 void setup () {
     wdt_disable(); //WatchDog Timer Initializing...
@@ -318,13 +310,13 @@ void setup () {
     dht.begin();
 
     if (DEBUG) {
-       Serial.println("Complilacion : " + String(__DATE__) + " / " + String(__TIME__));
+       Serial.println(F("Complilacion : ") + String(__DATE__) + F(" / ") + String(__TIME__));
     }
     lcd.setCursor(0,0);
-    lcd.print("Ver ");
+    lcd.print(F("Ver "));
     lcd.print(__DATE__);
     lcd.setCursor(0,1);
-    lcd.print("Compila.");
+    lcd.print(F("Compila."));
     lcd.print(__TIME__);
 
     //--------RTC SETUP ------------
@@ -332,16 +324,16 @@ void setup () {
     pinMode(RtcSquareWavePin, INPUT);
     Rtc.Begin();  
 
-    // if you are using ESP-01 then uncomment the line below to reset the pins to
-    // the available pins for SDA, SCL
-    // Wire.begin(0, 2); // due to limited pins, use pin 0 and 2 for SDA, SCL
+      // if you are using ESP-01 then uncomment the line below to reset the pins to
+      // the available pins for SDA, SCL
+      // Wire.begin(0, 2); // due to limited pins, use pin 0 and 2 for SDA, SCL
 
-    //RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
+      //RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
 
     if (!Rtc.GetIsRunning())
     {
         if (DEBUG) {
-          Serial.println("RTC was not actively running, starting now"); 
+          Serial.println(F("RTC was not actively running, starting now")); 
         }
         Rtc.SetIsRunning(true);
     }
@@ -353,20 +345,20 @@ void setup () {
         //    2) the battery on the device is low or even missing
         
         if (DEBUG) {
-          Serial.println("RTC lost confidence in the DateTime!");  
+          Serial.println(F("RTC lost confidence in the DateTime!"));  
         }
         
-        // following line sets the RTC to the date & time this sketch was compiled
-        // it will also reset the valid flag internally unless the Rtc device is
-        // having an issue
-        //Rtc.SetDateTime(compiled);
-        
-        // Publish SyncFlag to MQTT (Mosquitto)
-        /* Sincronizacion MQTT de Reloj desde controlador a migrar a MySensors
-        String pubStringTemp = "1";
-        pubStringTemp.toCharArray(message_buff, pubStringTemp.length()+1);
-        mqtt.publish("openHAB/Jardin/RiegoEstadoRelojSync", message_buff);
-        */
+          // following line sets the RTC to the date & time this sketch was compiled
+          // it will also reset the valid flag internally unless the Rtc device is
+          // having an issue
+          //Rtc.SetDateTime(compiled);
+          
+          // Publish SyncFlag to MQTT (Mosquitto)
+          /* Sincronizacion MQTT de Reloj desde controlador a migrar a MySensors
+          String pubStringTemp = "1";
+          pubStringTemp.toCharArray(message_buff, pubStringTemp.length()+1);
+          mqtt.publish("openHAB/Jardin/RiegoEstadoRelojSync", message_buff);
+          */
     }
 
     // never assume the Rtc was last configured by you, so
@@ -374,16 +366,14 @@ void setup () {
     Rtc.Enable32kHzPin(false);
     //Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone); 
     Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeAlarmBoth); 
-
     // throw away any old alarm state before we ran
     Rtc.LatchAlarmsTriggeredFlags();
-
     // setup external interrupt for RTC Alarm
     attachInterrupt(RtcSquareWaveInterrupt, InteruptServiceRoutine, FALLING);
 
     // Menu setup
     if (DEBUG) {  
-      Serial.print("Inicializando Menu...");
+      Serial.print(F("Inicializando Menu..."));
     }
 
     mm.add_menu(&mu1);
@@ -419,16 +409,10 @@ void setup () {
     mu4.add_item(&m4_mi3, &on_m4_item3_selected);
     mu4.add_item(&m4_mi4, &on_m4_item4_selected);
     mu4.add_item(&m4_mi5, &on_m4_item5_selected);
-    mu4.add_item(&m4_mi6, &on_m4_item6_selected);
-    mu4.add_item(&m4_mi7, &on_m4_item7_selected);
-    mu4.add_item(&m4_mi8, &on_m4_item8_selected);
-    mu4.add_item(&m4_mi9, &on_m4_item9_selected);
-    mu4.add_item(&m4_mi10, &on_m4_item10_selected);
-    mu4.add_item(&m4_mi11, &on_m4_item11_selected);
     ms.set_root_menu(&mm);
     
     if (DEBUG) {  
-      Serial.println("Menu Inicializado.");
+      Serial.println(F("Menu Inicializado."));
     }
 
     if (StatusWatchDog) {
@@ -484,28 +468,28 @@ void before() {
 
   //List all saved data
   if (DEBUG) {
-    Serial.println("--> Leyendo valores desde EEPROM :");
+    Serial.println(F("--> Leyendo valores desde EEPROM :"));
     for (int i=0;i<=255;i++) {
-      Serial.println("---> Sensor " + String(i) + " Valor:" + String(loadState(i)));
+      Serial.println(F("---> Sensor ") + String(i) + F(" Valor:") + String(loadState(i)));
     }
-    Serial.println("--> Lectura completada"); 
+    Serial.println(F("--> Lectura completada")); 
   }
 }
 
 void presentation()
 {   
   // Send the sketch version information to the gateway and Controller
-  sendSketchInfo("GardenController", "1.9");
+  sendSketchInfo(F("GardenController"), F("1.9"));
 
   // Register all sensors to gw (they will be created as child devices)
-  present(1, S_BINARY, "Riego Zona 1" );
-  present(2, S_BINARY, "Riego Zona 2" );
-  present(3, S_BINARY, "Riego Zona 3" );
-  present(4, S_BINARY, "Riego Zona 4" );
-  present(5, S_BINARY, "Relay5" );
-  present(6, S_BINARY, "Relay6" );
-  present(7, S_BINARY, "Relay7" );
-  present(8, S_BINARY, "Transformador Riego" );
+  present(1, S_BINARY, F("Riego Zona 1" ));
+  present(2, S_BINARY, F("Riego Zona 2" ));
+  present(3, S_BINARY, F("Riego Zona 3" ));
+  present(4, S_BINARY, F("Riego Zona 4" ));
+  present(5, S_BINARY, F("Relay5" ));
+  present(6, S_BINARY, F("Relay6" ));
+  present(7, S_BINARY, F("Relay7" ));
+  present(8, S_BINARY, F("Transformador Riego" ));
   present(9, S_TEMP, "Temperatura Jardin" );
   present(10, S_HUM, "Humedad Jardin" );
   present(11, S_CUSTOM, "Duracion Riego");
@@ -712,23 +696,23 @@ void receive(const MyMessage &message) {
        }
      }
 
-     /* MySensors message class Getter methods 
-      char* getStream(char *buffer) const;
-      char* getString(char *buffer) const;
-      const char* getString() const;
-      void* getCustom() const;
-      bool getBool() const;
-      uint8_t getByte() const;
-      float getFloat() const;
-      int16_t getInt() const;
-      uint16_t getUInt() const;
-      int32_t getLong() const;
-      uint32_t getULong() const;
-      // Getter for command type
-      uint8_t getCommand() const;
-      // Getter for ack-flag. True if this is an ack message.
-      bool isAck() const;
-      */ 
+      /* MySensors message class Getter methods 
+        char* getStream(char *buffer) const;
+        char* getString(char *buffer) const;
+        const char* getString() const;
+        void* getCustom() const;
+        bool getBool() const;
+        uint8_t getByte() const;
+        float getFloat() const;
+        int16_t getInt() const;
+        uint16_t getUInt() const;
+        int32_t getLong() const;
+        uint32_t getULong() const;
+        // Getter for command type
+        uint8_t getCommand() const;
+        // Getter for ack-flag. True if this is an ack message.
+        bool isAck() const;
+        */ 
 }
 
 // FlowMeter interrupt process
@@ -1108,14 +1092,14 @@ String GetTimer1() {
 }
 
 void SetTimer1(String TIME) {
-    // flags define what calendar component to be checked against the current time in order
-    // to trigger the alarm - see datasheet
-    // A1M1 (seconds) (0 to enable, 1 to disable)
-    // A1M2 (minutes) (0 to enable, 1 to disable)
-    // A1M3 (hour)    (0 to enable, 1 to disable) 
-    // A1M4 (day)     (0 to enable, 1 to disable)
-    // DY/DT          (dayofweek == 1/dayofmonth == 0)
-    //uint8_t flags[5] = { 0, 0, 0, 1, 1 };
+      // flags define what calendar component to be checked against the current time in order
+      // to trigger the alarm - see datasheet
+      // A1M1 (seconds) (0 to enable, 1 to disable)
+      // A1M2 (minutes) (0 to enable, 1 to disable)
+      // A1M3 (hour)    (0 to enable, 1 to disable) 
+      // A1M4 (day)     (0 to enable, 1 to disable)
+      // DY/DT          (dayofweek == 1/dayofmonth == 0)
+      //uint8_t flags[5] = { 0, 0, 0, 1, 1 };
 
     // Alarm 1 set to trigger hours, minutes, and seconds match
     TIME = TIME + ":00";
@@ -2293,25 +2277,6 @@ void on_m4_item1_selected(MenuItem* p_menu_item)
 }
     
 void on_m4_item2_selected(MenuItem* p_menu_item)
-{ //Ver Direccion IP
-  lcd.setCursor(0,0);
-  lcd.print("Direccion IP      ");
-  lcd.setCursor(0,1);
-  lcd.print(" ");
-//  lcd.print(Ethernet.localIP());
-  lcd.print("       ");
-  wdt_reset(); //WatchDog Timer Reset...
-  wait(1500);
-  //delay(1500); // so we can look the result on the LCD
-}
-
-void on_m4_item3_selected(MenuItem* p_menu_item)
-{ //Editar Direccion IP
-  setMenu = IPADDRESS;
-  menuSelected = true;
-  EditMode = true;
-}
-void on_m4_item4_selected(MenuItem* p_menu_item)
 { //Cambiar Modo Depuracion ON/OFF
   lcd.setCursor(0,0);
   lcd.print("Modo Depuracion ");
@@ -2329,7 +2294,7 @@ void on_m4_item4_selected(MenuItem* p_menu_item)
   //delay(1500); // so we can look the result on the LCD
 }
 
-void on_m4_item5_selected(MenuItem* p_menu_item)
+void on_m4_item3_selected(MenuItem* p_menu_item)
 { //Ver Modo Riego Programa/Smart!!
   lcd.setCursor(0,0);
   lcd.print("Modo Riego       ");
@@ -2346,7 +2311,7 @@ void on_m4_item5_selected(MenuItem* p_menu_item)
   //delay(1500); // so we can look the result on the LCD
 }
 
-void on_m4_item6_selected(MenuItem* p_menu_item)
+void on_m4_item4_selected(MenuItem* p_menu_item)
 { //Editar Modo Riego Programa/Smart!!
   lcd.setCursor(0,0);
   lcd.print("Modo Riego       ");
@@ -2363,46 +2328,7 @@ void on_m4_item6_selected(MenuItem* p_menu_item)
   //delay(1500); // so we can look the result on the LCD
 }
 
-void on_m4_item7_selected(MenuItem* p_menu_item)
-{ //Ver MQTT-SVR IP
-  lcd.setCursor(0,0);
-  lcd.print("MQTT-SVR IP       ");
-  lcd.setCursor(0,1);
-//  lcd.print(MQTT_SERVER);
-  lcd.print("          ");
-  wdt_reset(); //WatchDog Timer Reset...
-  wait(1500);
-  //delay(1500); // so we can look the result on the LCD
-}
-
-void on_m4_item8_selected(MenuItem* p_menu_item)
-{ //Edit MQTT-SVR IP
-  setMenu = MQTTIP;
-  menuSelected = true;
-  EditMode = true;
-}
-
-void on_m4_item9_selected(MenuItem* p_menu_item)
-{ //Ver MQTT-SVR PORT
-  lcd.setCursor(0,0);
-  lcd.print("MQTT-SVR PORT    ");
-  lcd.setCursor(0,1);
-  lcd.print("          ");
-//  lcd.print(MQTT_SERVER_PORT);
-  lcd.print("          ");
-  wdt_reset(); //WatchDog Timer Reset...
-  wait(1500);
-  //delay(1500); // so we can look the result on the LCD
-}
-
-void on_m4_item10_selected(MenuItem* p_menu_item)
-{ //Edit MQTT-SVR PORT
-  setMenu = MQTTPORT;
-  menuSelected = true;
-  EditMode = true;
-}
-
-void on_m4_item11_selected(MenuItem* p_menu_item)
+void on_m4_item5_selected(MenuItem* p_menu_item)
 { //Reinicialiar --> Borrar variables almacenadas en memoria
   lcd.setCursor(0,1);
   lcd.print("-->Iniciando... ");
